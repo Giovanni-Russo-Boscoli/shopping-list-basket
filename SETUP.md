@@ -16,7 +16,7 @@ These are safe to share (the app ships them to every phone). Never send the data
 ## 3. Phones
 - **iPhone**: open the link in Safari, tap Share > **Add to Home Screen**.
 - **Android**: open the link in Chrome, tap the menu > **Install app** (or Add to Home screen).
-Open it from the home screen, enter the household password, pick your name.
+Open it from the home screen and create your account (see GUIDE.md).
 
 ## 4. Accounts and households (one time)
 Supabase > **SQL Editor**: paste `supabase/004_accounts.sql`, click **Run**. The result shows the **invite code** of the household holding the existing list: create your account in the app, choose **Join**, and paste that code.
