@@ -63,6 +63,8 @@ Tap an item's name in the Catalogue to change its category, shops, prices, photo
 
 **Not sure what something does?**
 
+Prefer Portuguese? Tap **Português** on the sign-in screen, or in Settings > Language.
+
 Tap the **?** at the top right. Then tap anything to see what it's for; nothing changes while info mode is on. Tap **?** again to finish.
 
 ## 5. Updates and troubleshooting

@@ -1,7 +1,7 @@
 // Bump VERSION on every release: phones then show "Update ready. Tap to reload."
-const VERSION = "2026-11-13.9";
+const VERSION = "2026-11-13.10";
 const CACHE = "basket-" + VERSION;
-const SHELL = ["./", "index.html", "styles.css", "app.js", "config.js", "manifest.webmanifest",
+const SHELL = ["./", "index.html", "styles.css", "app.js", "i18n.js", "config.js", "manifest.webmanifest",
   "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png"];
 
 self.addEventListener("install", (e) => {

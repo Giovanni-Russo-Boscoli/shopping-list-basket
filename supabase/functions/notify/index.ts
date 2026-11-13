@@ -60,13 +60,17 @@ async function run() {
     const { household_id, pending_by_user } = list[0];
     const person = list[0].pending_by || "Someone";
     const names = list.map((i) => i.name);
-    const title = names.length === 1 ? `${person} added ${names[0]}` : `${person} added ${names.length} items`;
-    const body = names.length === 1 ? "Tap to open the list" : names.slice(0, 6).join(", ") + (names.length > 6 ? "…" : "");
+    const text = (lang: string) => {
+      const pt = lang === "pt"; const n = names.length;
+      const title = n === 1 ? `${person} ${pt ? "adicionou" : "added"} ${names[0]}` : `${person} ${pt ? "adicionou" : "added"} ${n} ${pt ? "itens" : "items"}`;
+      const body = n === 1 ? (pt ? "Toque para abrir a lista" : "Tap to open the list") : names.slice(0, 6).join(", ") + (n > 6 ? "…" : "");
+      return { title, body };
+    };
     for (const s of subs ?? []) {
       if (s.household_id !== household_id) continue;
       if (pending_by_user ? s.user_id === pending_by_user : s.person === person) continue; // not to the person who added
       try {
-        await server.subscribe(s.subscription).pushTextMessage(JSON.stringify({ title, body }), {});
+        await server.subscribe(s.subscription).pushTextMessage(JSON.stringify(text(s.subscription?.lang ?? "en")), {});
         sent++;
       } catch (err) {
         if (err instanceof webpush.PushMessageError && err.isGone()) await sb.from("push_subscriptions").delete().eq("endpoint", s.endpoint);

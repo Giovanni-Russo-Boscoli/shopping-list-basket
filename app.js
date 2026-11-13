@@ -182,6 +182,7 @@ function viewSettings() {
       <div class="row"><span class="info" style="flex:1"><div class="name">${esc(S.me)}</div><div class="meta">${esc(S.session.user.email || "")}</div></span><button class="ghost" data-myname>Change name</button></div>
       <div class="row"><span class="info" style="flex:1"><div class="name">Notifications</div><div class="meta" style="white-space:normal">${esc(pushStatusText())}</div></span>
         ${S.push === "on" ? `<button class="ghost" data-pushoff>Turn off</button>` : S.push === "off" ? `<button class="ghost" data-pushon>Turn on</button>` : ""}</div>
+      <div class="row" style="flex-wrap:wrap"><span class="info" style="flex:1"><div class="name">Language</div><div class="meta" style="white-space:normal">Choose the language for this phone.</div></span>${langChips()}</div>
       <div class="row"><span class="name">Sign out of this phone</span><button class="ghost" data-signout>Sign out</button></div></div></section>
     <p class="hint">Shop and category order is shared. Match it to the way you walk around the shop.</p></main>`;
 }
@@ -227,7 +228,7 @@ const curHousehold = () => (S.households || []).find((h) => h.id === S.hid) || {
 const inviteLink = (code) => location.origin + location.pathname + "?join=" + encodeURIComponent(code);
 function viewAuth() {
   const up = S.authMode === "up";
-  return `<div class="lock"><div class="card"><h1>Basket</h1><p class="sub">${S.joinCode ? "You've been invited to a shared shopping list. " : ""}${up ? "Create your account." : "Sign in to your shopping list."}</p>
+  return `<div class="lock"><div class="card">${langChips()}<h1>Basket</h1><p class="sub">${S.joinCode ? "You've been invited to a shared shopping list. " : ""}${up ? "Create your account." : "Sign in to your shopping list."}</p>
     <div class="seg" role="group" aria-label="Account"><button data-authmode="in" aria-pressed="${!up}">Sign in</button><button data-authmode="up" aria-pressed="${up}">Create account</button></div>
     ${up ? `<label class="f" for="a-name">Your first name</label><input id="a-name" autocomplete="given-name" autocapitalize="words" maxlength="30">` : ""}
     <label class="f" for="a-email">Email</label><input id="a-email" type="email" autocomplete="email" inputmode="email" autocapitalize="none">
@@ -258,7 +259,12 @@ const ICON = {
   cat: '<path d="M4 6h16M4 12h16M4 18h10"/>',
   set: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/>',
 };
-function render() {
+function render() { renderInner(); I18N.translateDom($("#root")); }
+function langChips() {
+  return `<div class="chips" role="group" aria-label="Language" style="padding-top:0" data-notr>${I18N.LANGS.map(([k, n]) =>
+    `<button class="chip" data-lang="${k}" aria-pressed="${I18N.lang === k}">${n}</button>`).join("")}</div>`;
+}
+function renderInner() {
   const a = document.activeElement; const fid = a && a.id;
   const caret = a && a.selectionStart != null && a.type !== "number" ? a.selectionStart : null;
   const formVals = {}; document.querySelectorAll(".sheet input:not([readonly]), .sheet select").forEach((el) => { formVals[el.id] = el.type === "checkbox" ? el.checked : el.value; });
@@ -341,6 +347,11 @@ async function householdAction(kind) {
     : await sb.rpc("create_household", { p_name: arg, p_display_name: me });
   S.busy = false;
   if (error) { S.lockErr = /invalid invite/i.test(error.message) ? "That invite isn't valid. Ask for a new link." : "Couldn't do that. Check your signal and try again."; render(); return; }
+  if (kind === "create" && I18N.DEFAULT_CATS[I18N.lang]) {
+    // New households start with English category names; rename them to the chosen language.
+    await Promise.all(Object.entries(I18N.DEFAULT_CATS[I18N.lang]).map(([en, local]) =>
+      sb.from("categories").update({ name: local }).eq("household_id", data).eq("name", en)));
+  }
   S.joinCode = null; ls.del("basket.join"); await switchHousehold(data);
 }
 async function switchHousehold(id) {
@@ -439,7 +450,8 @@ document.addEventListener("click", async (e) => {
   const t = e.target.closest("button,[data-close]"); if (!t || t.disabled) return;
   const d = t.dataset; const num = (x) => Number(x);
   if (d.close !== undefined && e.target !== t) return;
-  if (d.authmode) { S.authMode = d.authmode; S.lockErr = ""; render(); }
+  if (d.lang) { I18N.set(d.lang); render(); if (S.push === "on") pushInit().catch(() => {}); }
+  else if (d.authmode) { S.authMode = d.authmode; S.lockErr = ""; render(); }
   else if (d.auth !== undefined) authSubmit();
   else if (d.forgot !== undefined) forgotPassword();
   else if (d.joinhh !== undefined) householdAction("join");
@@ -449,7 +461,7 @@ document.addEventListener("click", async (e) => {
   else if (d.closehh !== undefined) { S.pickHousehold = false; S.lockErr = ""; render(); }
   else if (d.invite !== undefined) { S.sheet = { kind: "invite" }; render(); }
   else if (d.copyinvite !== undefined) { const l = inviteLink(curHousehold().invite_code); navigator.clipboard.writeText(l).then(() => toast("Link copied"), () => { const el = $("#inv-link"); el.select(); }); }
-  else if (d.shareinvite !== undefined) { navigator.share({ title: "Join our shopping list", text: "Join our shared shopping list on Basket:", url: inviteLink(curHousehold().invite_code) }).catch(() => {}); }
+  else if (d.shareinvite !== undefined) { navigator.share({ title: I18N.tr("Join our shopping list"), text: I18N.tr("Join our shared shopping list on Basket:"), url: inviteLink(curHousehold().invite_code) }).catch(() => {}); }
   else if (d.newinvite !== undefined) {
     const { data, error } = await sb.rpc("new_invite_code", { p_household: S.hid });
     if (error) fail(error); else { curHousehold().invite_code = data; render(); toast("New link made. The old one no longer works."); }
@@ -646,11 +658,12 @@ async function openScanner(mode) {
     if (navigator.vibrate) navigator.vibrate(60);
     closeScanner(); onBarcode(code, mode);
   };
+  I18N.translateDom(el);
   $("#scan-close").onclick = closeScanner;
   $("#scan-use").onclick = () => finish($("#scan-typed").value);
   $("#scan-typed").onkeydown = (e) => { if (e.key === "Enter") finish(e.target.value); };
   el.onclick = (e) => { if (e.target === el) closeScanner(); };
-  const msg = (t) => { const m = $("#scan-msg"); if (m) m.textContent = t; };
+  const msg = (t) => { const m = $("#scan-msg"); if (m) m.textContent = I18N.tr(t); };
   const video = $("#scan-video");
   try {
     const detector = await nativeDetector();
@@ -688,10 +701,10 @@ async function openScanner(mode) {
 }
 async function lookupProduct(code) {
   try {
-    const r = await fetch(`https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}.json?fields=product_name,product_name_en,brands,quantity,image_front_small_url,image_front_url`);
+    const r = await fetch(`https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}.json?fields=product_name,product_name_en,product_name_pt,brands,quantity,image_front_small_url,image_front_url`);
     if (!r.ok) return null;
     const j = await r.json(); const p = j.product; if (j.status !== 1 || !p) return null;
-    const base = p.product_name_en || p.product_name || "";
+    const base = (I18N.lang === "pt" ? p.product_name_pt || p.product_name : p.product_name_en || p.product_name) || "";
     const brand = (p.brands || "").split(",")[0].trim();
     const name = (brand && base && !base.toLowerCase().includes(brand.toLowerCase()) ? brand + " " + base : base || brand).trim();
     return name ? { name, quantity: p.quantity || "", photo: p.image_front_small_url || p.image_front_url || null } : null;
@@ -749,7 +762,7 @@ async function pushInit() {
   const reg = await navigator.serviceWorker.ready;
   const sub = await reg.pushManager.getSubscription();
   S.push = sub ? "on" : "off";
-  if (sub && S.me) sb.from("push_subscriptions").upsert({ endpoint: sub.endpoint, person: S.me, subscription: sub.toJSON(), household_id: S.hid, user_id: S.session.user.id }).then(() => {});
+  if (sub && S.me) sb.from("push_subscriptions").upsert({ endpoint: sub.endpoint, person: S.me, subscription: { ...sub.toJSON(), lang: I18N.lang }, household_id: S.hid, user_id: S.session.user.id }).then(() => {});
 }
 function b64ToBytes(b64) {
   const pad = "=".repeat((4 - (b64.length % 4)) % 4);
@@ -765,7 +778,7 @@ async function pushOn() {
     if (!publicKey) throw new Error("no key");
     const reg = await navigator.serviceWorker.ready;
     const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(publicKey) });
-    const { error } = await sb.from("push_subscriptions").upsert({ endpoint: sub.endpoint, person: S.me, subscription: sub.toJSON(), household_id: S.hid, user_id: S.session.user.id });
+    const { error } = await sb.from("push_subscriptions").upsert({ endpoint: sub.endpoint, person: S.me, subscription: { ...sub.toJSON(), lang: I18N.lang }, household_id: S.hid, user_id: S.session.user.id });
     if (error) throw error;
     S.push = "on"; toast("Notifications on");
   } catch (e) { console.error(e); S.push = "off"; toast("Couldn't turn on notifications. Try again."); }
