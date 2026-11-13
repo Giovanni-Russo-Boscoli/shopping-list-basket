@@ -1,5 +1,5 @@
 // Bump VERSION on every release: phones then show "Update ready. Tap to reload."
-const VERSION = "2026-11-13.8";
+const VERSION = "2026-11-13.9";
 const CACHE = "basket-" + VERSION;
 const SHELL = ["./", "index.html", "styles.css", "app.js", "config.js", "manifest.webmanifest",
   "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png"];

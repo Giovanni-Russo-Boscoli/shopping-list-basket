@@ -301,7 +301,10 @@ async function authSubmit() {
   if (res.error) {
     const m = res.error.message || "";
     S.lockErr = /invalid login/i.test(m) ? "Email or password isn't right." : /already registered/i.test(m) ? "There's already an account with that email. Sign in instead."
-      : /password/i.test(m) ? m : "Couldn't " + (up ? "create the account" : "sign in") + ". Check your signal and try again.";
+      : /signups? not allowed|signup.*disabled/i.test(m) ? "New accounts are switched off. In Supabase, turn on \"Allow new users to sign up\"."
+      : /sending.*email|confirmation/i.test(m) ? "Supabase couldn't send a confirmation email. In Supabase, turn off \"Confirm email\"."
+      : /password/i.test(m) ? m
+      : "Couldn't " + (up ? "create the account" : "sign in") + (navigator.onLine ? ". Supabase said: " + (m || "unknown error") : ". Check your signal and try again.");
     render(); return;
   }
   if (!res.data.session) { S.lockErr = "Account created. Check your email to confirm it, then sign in."; S.authMode = "in"; render(); return; }
