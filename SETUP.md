@@ -4,14 +4,8 @@
 1. Go to https://supabase.com and click **Start your project**. Sign in with GitHub.
 2. **New project**: name `basket`, region **West EU (Ireland)**, click **Generate a password** (save it in your password manager; Claude never needs it), plan **Free**. Create.
 3. When it's ready, open **SQL Editor > New query**, paste the whole of `supabase/schema.sql`, click **Run**. You should see "Success".
-4. **Authentication > Users > Add user > Create new user**
-   - Email: `household@basket-home.app` (a made-up login name; it is public in the code, so do not use a real email).
-   - Password: the household password everyone in the house will type.
-   - Tick **Auto Confirm User**.
-5. **Authentication > Sign In / Providers**: turn **off** "Allow new users to sign up". This stops anyone else creating an account.
-6. **Project Settings > API Keys** (or **Data API**): copy the **Project URL** and the **anon public** key.
-
-Send Claude: the Project URL, the anon public key, and the login email from step 4.
+4. **Authentication > Sign In / Providers > Email**: keep **Allow new users to sign up** on, and turn **Confirm email** off (Supabase's free email service only delivers to the project's own team, so confirmation emails would never arrive).
+5. **Project Settings > API Keys** (or **Data API**): copy the **Project URL** and the **publishable** key into `config.js`.
 These are safe to share (the app ships them to every phone). Never send the database password or the `service_role` key.
 
 ## 2. GitHub (hosting)
@@ -24,7 +18,10 @@ These are safe to share (the app ships them to every phone). Never send the data
 - **Android**: open the link in Chrome, tap the menu > **Install app** (or Add to Home screen).
 Open it from the home screen, enter the household password, pick your name.
 
-## 4. Photos (one time)
+## 4. Accounts and households (one time)
+Supabase > **SQL Editor**: paste `supabase/004_accounts.sql`, click **Run**. The result shows the **invite code** of the household holding the existing list: create your account in the app, choose **Join**, and paste that code.
+
+## 4b. Photos (one time)
 Supabase > **SQL Editor**: paste `supabase/002_photos.sql`, click **Run**.
 
 ## 5. Notifications (one time, about 5 minutes)

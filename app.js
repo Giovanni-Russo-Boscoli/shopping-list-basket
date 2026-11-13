@@ -12,7 +12,8 @@ const ls = {
   del(k) { try { localStorage.removeItem(k); } catch {} },
 };
 const S = {
-  session: null, me: ls.get("basket.me"), ready: false, online: navigator.onLine,
+  session: null, me: null, ready: false, online: navigator.onLine,
+  households: null, hid: ls.get("basket.household"), members: [], authMode: "in", joinCode: null,
   tab: ls.get("basket.tab") || "shop", group: ls.get("basket.group") || "cat", shop: "All", q: "",
   sheet: null, toast: null, lockErr: "", busy: false, updateReady: null,
   cats: [], shops: [], items: [],
@@ -54,13 +55,15 @@ function fail(e) { console.error(e); toast(navigator.onLine ? "Couldn't save. Tr
 // ---------- data ----------
 async function load() {
   const [c, s, i, is] = await Promise.all([
-    sb.from("categories").select("*").order("sort_order"),
-    sb.from("shops").select("*").order("sort_order"),
-    sb.from("items").select("*").order("name"),
-    sb.from("item_shops").select("*"),
+    sb.from("categories").select("*").eq("household_id", S.hid).order("sort_order"),
+    sb.from("shops").select("*").eq("household_id", S.hid).order("sort_order"),
+    sb.from("items").select("*").eq("household_id", S.hid).order("name"),
+    sb.from("item_shops").select("*").eq("household_id", S.hid),
   ]);
-  const err = c.error || s.error || i.error || is.error;
+  const m = await sb.from("members").select("user_id,display_name").eq("household_id", S.hid).order("joined_at");
+  const err = c.error || s.error || i.error || is.error || m.error;
   if (err) throw err;
+  S.members = m.data;
   S.cats = c.data; S.shops = s.data;
   const prices = {};
   for (const r of is.data) (prices[r.item_id] ||= {})[r.shop_id] = r.price_eur === null ? null : Number(r.price_eur);
@@ -76,8 +79,10 @@ function scheduleReload() {
 let channel;
 function subscribe() {
   if (channel) sb.removeChannel(channel);
-  channel = sb.channel("basket")
-    .on("postgres_changes", { event: "*", schema: "public" }, scheduleReload)
+  channel = sb.channel("basket-" + S.hid);
+  for (const table of ["categories", "shops", "items", "item_shops", "members"])
+    channel.on("postgres_changes", { event: "*", schema: "public", table, filter: "household_id=eq." + S.hid }, scheduleReload);
+  channel
     .subscribe((status) => { if (status === "SUBSCRIBED") scheduleReload(); });
 }
 async function updateItem(id, patch) {
@@ -169,8 +174,12 @@ function listEditor(kind, rows) {
 function viewSettings() {
   return header("Settings") + `<main class="settings">
     ${listEditor("shops", S.shops)}${listEditor("categories", S.cats)}
-    <section class="group"><h2><span>This phone</span></h2><div class="list">
-      <div class="row"><span class="name">I'm ${esc(S.me)}</span><button class="ghost" data-switchme>Switch</button></div>
+    <section class="group"><h2><span>Household</span><span>${S.members.length} ${S.members.length === 1 ? "person" : "people"}</span></h2><div class="list">
+      <div class="row"><span class="info" style="flex:1"><div class="name">${esc(curHousehold().name)}</div><div class="meta" style="white-space:normal">${esc(S.members.map((m) => m.display_name).join(", "))}</div></span><button class="ghost" data-renamehh>Rename</button></div>
+      <div class="row"><span class="info" style="flex:1"><div class="name">Invite someone</div><div class="meta" style="white-space:normal">Send them a link to join this list.</div></span><button class="ghost" data-invite>Invite</button></div>
+      <div class="row"><span class="info" style="flex:1"><div class="name">Other households</div><div class="meta" style="white-space:normal">${S.households.length > 1 ? "You're in " + S.households.length + ". Switch, or join or create another." : "Join or create another list, e.g. for work."}</div></span><button class="ghost" data-households>Open</button></div></div></section>
+    <section class="group"><h2><span>You</span></h2><div class="list">
+      <div class="row"><span class="info" style="flex:1"><div class="name">${esc(S.me)}</div><div class="meta">${esc(S.session.user.email || "")}</div></span><button class="ghost" data-myname>Change name</button></div>
       <div class="row"><span class="info" style="flex:1"><div class="name">Notifications</div><div class="meta" style="white-space:normal">${esc(pushStatusText())}</div></span>
         ${S.push === "on" ? `<button class="ghost" data-pushoff>Turn off</button>` : S.push === "off" ? `<button class="ghost" data-pushon>Turn on</button>` : ""}</div>
       <div class="row"><span class="name">Sign out of this phone</span><button class="ghost" data-signout>Sign out</button></div></div></section>
@@ -178,11 +187,20 @@ function viewSettings() {
 }
 function sheetHtml() {
   const sh = S.sheet; if (!sh) return "";
+  if (sh.kind === "invite") {
+    const link = inviteLink(curHousehold().invite_code);
+    return `<div class="scrim" data-close><div class="sheet" role="dialog" aria-label="Invite someone"><h3>Invite someone <button class="ghost" data-closebtn>Close</button></h3>
+      <p class="hint" style="margin-top:0">Send this link to the person you want to share “${esc(curHousehold().name)}” with. They open it, create an account, and they're in.</p>
+      <input id="inv-link" readonly value="${esc(link)}">
+      ${navigator.share ? `<button class="primary" data-shareinvite>Share link</button>` : ""}
+      <button class="${navigator.share ? "add" : "primary"}" data-copyinvite>Copy link</button>
+      <button class="add" style="border:0" data-newinvite>Make a new link (stops the old one working)</button></div></div>`;
+  }
   if (sh.kind === "name") {
     return `<div class="scrim" data-close><div class="sheet" role="dialog" aria-label="${esc(sh.title)}"><h3>${esc(sh.title)} <button class="ghost" data-closebtn>Close</button></h3>
       <label class="f" for="n-name">Name</label><input id="n-name" value="${esc(sh.value)}" autocomplete="off">
       <button class="primary" data-savename>Save</button>
-      ${sh.id ? `<button class="add danger" style="border-color:currentColor" data-delname>Delete</button>` : ""}
+      ${sh.id && (sh.kind2 === "shops" || sh.kind2 === "categories") ? `<button class="add danger" style="border-color:currentColor" data-delname>Delete</button>` : ""}
       ${sh.err ? `<p class="err">${esc(sh.err)}</p>` : ""}</div></div>`;
   }
   const it = sh.item;
@@ -205,26 +223,35 @@ function sheetHtml() {
     ${!sh.isNew ? `<button class="add danger" style="border-color:currentColor" data-delitem>Delete from catalogue</button>` : ""}
     ${sh.err ? `<p class="err">${esc(sh.err)}</p>` : ""}</div></div>`;
 }
-// Names are never stored in the code: each phone types one on first use.
-function knownNames() {
-  const set = new Set();
-  for (const i of S.items) for (const n of [i.updated_by, i.pending_by]) if (n && n.trim()) set.add(n.trim());
-  return [...set].sort((x, y) => x.localeCompare(y));
-}
-function viewLock() {
-  if (!S.session) {
-    return `<div class="lock"><div class="card"><h1>Basket</h1><p class="sub">Your household's shared shopping list.</p>
-      <label class="f" for="pw">Household password</label><input id="pw" type="password" autocomplete="current-password" enterkeyhint="go">
-      <button class="primary" data-unlock ${S.busy ? "disabled style='opacity:.5'" : ""}>Unlock</button>
-      ${S.lockErr ? `<p class="err">${esc(S.lockErr)}</p>` : ""}</div></div>`;
-  }
-  const names = knownNames();
-  return `<div class="lock"><div class="card"><h1>Who's this?</h1><p class="sub">Your name shows the other person who added what. It's only stored in your own list.</p>
-    ${names.length ? `<label class="f">Pick your name</label><div class="who" style="flex-wrap:wrap">${names.map((n) => `<button class="chip" data-me="${esc(n)}">${esc(n)}</button>`).join("")}</div>
-      <label class="f" for="me-new">Or type a new one</label>` : `<label class="f" for="me-new">Your name</label>`}
-    <input id="me-new" autocomplete="given-name" autocapitalize="words" maxlength="30" enterkeyhint="done" value="${esc(S.lockScreen ? S.me || "" : "")}">
-    <button class="primary" data-setme>Continue</button>
+const curHousehold = () => (S.households || []).find((h) => h.id === S.hid) || { name: "Home" };
+const inviteLink = (code) => location.origin + location.pathname + "?join=" + encodeURIComponent(code);
+function viewAuth() {
+  const up = S.authMode === "up";
+  return `<div class="lock"><div class="card"><h1>Basket</h1><p class="sub">${S.joinCode ? "You've been invited to a shared shopping list. " : ""}${up ? "Create your account." : "Sign in to your shopping list."}</p>
+    <div class="seg" role="group" aria-label="Account"><button data-authmode="in" aria-pressed="${!up}">Sign in</button><button data-authmode="up" aria-pressed="${up}">Create account</button></div>
+    ${up ? `<label class="f" for="a-name">Your first name</label><input id="a-name" autocomplete="given-name" autocapitalize="words" maxlength="30">` : ""}
+    <label class="f" for="a-email">Email</label><input id="a-email" type="email" autocomplete="email" inputmode="email" autocapitalize="none">
+    <label class="f" for="a-pw">Password${up ? " (at least 8 characters)" : ""}</label><input id="a-pw" type="password" autocomplete="${up ? "new-password" : "current-password"}" enterkeyhint="go">
+    <button class="primary" data-auth ${S.busy ? "disabled style='opacity:.5'" : ""}>${up ? "Create account" : "Sign in"}</button>
+    ${!up ? `<button class="add" style="border:0;margin-top:6px" data-forgot>Forgot password?</button>` : ""}
     ${S.lockErr ? `<p class="err">${esc(S.lockErr)}</p>` : ""}</div></div>`;
+}
+function viewHouseholds() {
+  const list = S.households || [];
+  const defName = S.me || (S.session.user.user_metadata || {}).name || "";
+  return `<div class="lock"><div class="card"><h1>${list.length ? "Your households" : "Set up your list"}</h1>
+    <p class="sub">A household is one shared list. Everyone in it sees the same items.</p>
+    ${list.length ? `<div class="list" style="margin-top:12px">${list.map((h) => `<button class="row" data-pickhh="${h.id}"><span class="info"><div class="name">${esc(h.name)}</div><div class="meta">as ${esc(h.display_name)}</div></span>${h.id === S.hid ? `<span class="meta">Current</span>` : ""}</button>`).join("")}</div>` : ""}
+    <label class="f" for="h-me">Your name in the list</label><input id="h-me" value="${esc(defName)}" autocapitalize="words" maxlength="30">
+    <h3 style="font:600 16px var(--display);margin:20px 0 0">Join with an invite</h3>
+    <label class="f" for="h-code">Invite link or code</label><input id="h-code" value="${esc(S.joinCode || "")}" autocapitalize="none" autocomplete="off" placeholder="Paste the link you were sent">
+    <button class="primary" data-joinhh ${S.busy ? "disabled" : ""}>Join</button>
+    <h3 style="font:600 16px var(--display);margin:24px 0 0">Or start a new list</h3>
+    <label class="f" for="h-name">Household name</label><input id="h-name" placeholder="e.g. Home" maxlength="40">
+    <button class="add" data-createhh ${S.busy ? "disabled" : ""}>Create household</button>
+    ${S.lockErr ? `<p class="err">${esc(S.lockErr)}</p>` : ""}
+    <button class="add" style="border:0" data-signout>Sign out</button>
+    ${list.length && S.hid ? `<button class="add" style="border:0" data-closehh>Back to the list</button>` : ""}</div></div>`;
 }
 const ICON = {
   shop: '<path d="M5 7h14l-1.5 11h-11z"/><path d="M9 7V5a3 3 0 0 1 6 0v2"/>',
@@ -234,10 +261,15 @@ const ICON = {
 function render() {
   const a = document.activeElement; const fid = a && a.id;
   const caret = a && a.selectionStart != null && a.type !== "number" ? a.selectionStart : null;
-  const formVals = {}; document.querySelectorAll(".sheet input, .sheet select").forEach((el) => { formVals[el.id] = el.type === "checkbox" ? el.checked : el.value; });
-  const pw = $("#pw") && $("#pw").value;
-  if (!S.session || ((!S.me || S.lockScreen) && S.ready)) { $("#root").innerHTML = viewLock(); if (pw) $("#pw").value = pw; restore(); return; }
-  if (!S.ready || !S.me) { $("#root").innerHTML = `<div class="boot">Loading your list…</div>`; return; }
+  const formVals = {}; document.querySelectorAll(".sheet input:not([readonly]), .sheet select").forEach((el) => { formVals[el.id] = el.type === "checkbox" ? el.checked : el.value; });
+  const keep = {}; document.querySelectorAll(".lock input").forEach((el) => { keep[el.id] = el.value; });
+  const lockView = !S.session ? viewAuth : S.households && (!S.hid || S.pickHousehold) ? viewHouseholds : null;
+  if (lockView) {
+    $("#root").innerHTML = lockView();
+    for (const [k, v] of Object.entries(keep)) { const el = document.getElementById(k); if (el && v) el.value = v; }
+    restore(); return;
+  }
+  if (!S.ready) { $("#root").innerHTML = `<div class="boot">Loading your list…</div>`; return; }
   const pc = S.items.filter((i) => i.pending && !i.picked).length;
   $("#root").innerHTML = `<div class="app">${S.tab === "shop" ? viewShop() : S.tab === "cat" ? viewCat() : viewSettings()}</div>
   <nav><div class="in">
@@ -255,27 +287,69 @@ function render() {
 }
 
 // ---------- actions ----------
-async function unlock() {
+async function authSubmit() {
+  const up = S.authMode === "up";
+  const email = $("#a-email").value.trim(), password = $("#a-pw").value;
+  const name = up ? $("#a-name").value.trim() : "";
+  if (up && !name) { S.lockErr = "Type your first name."; render(); return; }
+  if (!email || !password) { S.lockErr = "Type your email and password."; render(); return; }
+  if (up && password.length < 8) { S.lockErr = "Use a password of at least 8 characters."; render(); return; }
   S.lockErr = ""; S.busy = true; render();
-  if (!S.session) {
-    const password = $("#pw").value;
-    const { data, error } = await sb.auth.signInWithPassword({ email: CFG.householdEmail, password });
-    if (error) { S.busy = false; S.lockErr = error.message.includes("Invalid") ? "That password isn't right." : "Couldn't sign in. Check your signal and try again."; render(); return; }
-    S.session = data.session;
-  }
+  const res = up ? await sb.auth.signUp({ email, password, options: { data: { name } } })
+    : await sb.auth.signInWithPassword({ email, password });
   S.busy = false;
+  if (res.error) {
+    const m = res.error.message || "";
+    S.lockErr = /invalid login/i.test(m) ? "Email or password isn't right." : /already registered/i.test(m) ? "There's already an account with that email. Sign in instead."
+      : /password/i.test(m) ? m : "Couldn't " + (up ? "create the account" : "sign in") + ". Check your signal and try again.";
+    render(); return;
+  }
+  if (!res.data.session) { S.lockErr = "Account created. Check your email to confirm it, then sign in."; S.authMode = "in"; render(); return; }
+  S.session = res.data.session;
   await start();
 }
-function setMe(name) {
-  name = String(name || "").trim().replace(/\s+/g, " ").slice(0, 30);
-  if (!name) { S.lockErr = "Type your name."; render(); return; }
-  const old = S.me;
-  S.me = name; S.lockErr = ""; S.lockScreen = false; ls.set("basket.me", name); render();
-  if (old !== name && S.push === "on") pushInit().catch(() => {}); // re-label this phone for notifications
+async function forgotPassword() {
+  const email = $("#a-email").value.trim();
+  if (!email) { S.lockErr = "Type your email first, then tap Forgot password."; render(); return; }
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
+  S.lockErr = error ? "Couldn't send the reset email. Ask someone in your household to help, or try later." : "If that email has an account, a reset link is on its way.";
+  render();
+}
+async function loadHouseholds() {
+  const { data, error } = await sb.from("members").select("household_id,display_name,households(id,name,invite_code)").eq("user_id", S.session.user.id);
+  if (error) throw error;
+  S.households = data.filter((r) => r.households).map((r) => ({ id: r.household_id, name: r.households.name, invite_code: r.households.invite_code, display_name: r.display_name }));
+  if (!S.households.some((h) => h.id === S.hid)) S.hid = S.households.length === 1 ? S.households[0].id : null;
+  const cur = S.households.find((h) => h.id === S.hid);
+  S.me = cur ? cur.display_name : null;
+  if (S.hid) ls.set("basket.household", S.hid); else ls.del("basket.household");
+}
+function parseCode(v) {
+  v = String(v || "").trim(); const m = v.match(/[?&]join=([^&#\s]+)/);
+  return (m ? decodeURIComponent(m[1]) : v).toLowerCase();
+}
+async function householdAction(kind) {
+  const me = $("#h-me").value.trim();
+  if (!me) { S.lockErr = "Type your name first."; render(); return; }
+  const arg = kind === "join" ? parseCode($("#h-code").value) : $("#h-name").value.trim() || "Home";
+  if (kind === "join" && !arg) { S.lockErr = "Paste the invite link or code."; render(); return; }
+  S.lockErr = ""; S.busy = true; render();
+  const { data, error } = kind === "join" ? await sb.rpc("join_household", { p_code: arg, p_display_name: me })
+    : await sb.rpc("create_household", { p_name: arg, p_display_name: me });
+  S.busy = false;
+  if (error) { S.lockErr = /invalid invite/i.test(error.message) ? "That invite isn't valid. Ask for a new link." : "Couldn't do that. Check your signal and try again."; render(); return; }
+  S.joinCode = null; ls.del("basket.join"); await switchHousehold(data);
+}
+async function switchHousehold(id) {
+  S.hid = id; ls.set("basket.household", id); S.pickHousehold = false; S.ready = false; S.shop = "All"; S.sheet = null; render();
+  await start();
 }
 async function start() {
+  try { await loadHouseholds(); } catch (e) { console.error(e); S.households = []; toast("Couldn't load your households. Check your signal."); }
+  if (S.joinCode) { const already = S.households.find((h) => h.invite_code === S.joinCode); if (already) { S.joinCode = null; ls.del("basket.join"); S.hid = already.id; S.me = already.display_name; } else S.pickHousehold = true; }
+  if (!S.hid) { render(); return; }
   render();
-  try { await load(); } catch (e) { console.error(e); S.ready = true; toast("Couldn't load the list. Pull down or reopen to retry."); }
+  try { await load(); } catch (e) { console.error(e); S.ready = true; toast("Couldn't load the list. Close and reopen the app to retry."); }
   subscribe(); render();
   pushInit().then(render).catch((e) => { console.error(e); S.push = "unsupported"; render(); });
 }
@@ -298,7 +372,7 @@ async function saveItem() {
   try {
     let id = it.id;
     if (sh.isNew) {
-      const { data, error } = await sb.from("items").insert({ ...row, pending: true }).select().single();
+      const { data, error } = await sb.from("items").insert({ ...row, household_id: S.hid, pending: true }).select().single();
       if (error) throw error; id = data.id;
     } else {
       const { error } = await sb.from("items").update(row).eq("id", id); if (error) throw error;
@@ -314,7 +388,7 @@ async function saveItem() {
     const removed = Object.keys(old).filter((k) => !(k in prices));
     if (removed.length) { const { error } = await sb.from("item_shops").delete().eq("item_id", id).in("shop_id", removed); if (error) throw error; }
     const up = Object.entries(prices).map(([sid, p]) => ({
-      item_id: id, shop_id: Number(sid), price_eur: p,
+      item_id: id, shop_id: Number(sid), price_eur: p, household_id: S.hid,
       ...(p !== null && old[sid] !== p ? { price_updated_at: new Date().toISOString() } : {}),
     }));
     if (up.length) { const { error } = await sb.from("item_shops").upsert(up); if (error) throw error; }
@@ -325,9 +399,18 @@ async function saveItem() {
 async function saveName() {
   const sh = S.sheet; const name = $("#n-name").value.trim();
   if (!name) { sh.err = "Type a name."; render(); return; }
-  const table = sh.kind2; const rows = S[table === "shops" ? "shops" : "cats"];
+  const table = sh.kind2;
+  if (table === "households" || table === "members") {
+    const { error } = table === "households" ? await sb.from("households").update({ name }).eq("id", S.hid)
+      : await sb.from("members").update({ display_name: name }).eq("household_id", S.hid).eq("user_id", S.session.user.id);
+    if (error) { sh.err = "Couldn't save. Try again."; render(); return; }
+    S.sheet = null; await loadHouseholds(); await load(); render();
+    if (table === "members" && S.push === "on") pushInit().catch(() => {});
+    return;
+  }
+  const rows = S[table === "shops" ? "shops" : "cats"];
   const q = sh.id ? sb.from(table).update({ name }).eq("id", sh.id)
-    : sb.from(table).insert({ name, sort_order: Math.max(0, ...rows.map((r) => r.sort_order)) + 1 });
+    : sb.from(table).insert({ name, household_id: S.hid, sort_order: Math.max(0, ...rows.map((r) => r.sort_order)) + 1 });
   const { error } = await q;
   if (error) { sh.err = error.code === "23505" ? "That name already exists." : "Couldn't save. Try again."; render(); return; }
   S.sheet = null; await load(); render();
@@ -353,9 +436,23 @@ document.addEventListener("click", async (e) => {
   const t = e.target.closest("button,[data-close]"); if (!t || t.disabled) return;
   const d = t.dataset; const num = (x) => Number(x);
   if (d.close !== undefined && e.target !== t) return;
-  if (d.me) setMe(d.me);
-  else if (d.setme !== undefined) setMe($("#me-new").value);
-  else if (d.unlock !== undefined) unlock();
+  if (d.authmode) { S.authMode = d.authmode; S.lockErr = ""; render(); }
+  else if (d.auth !== undefined) authSubmit();
+  else if (d.forgot !== undefined) forgotPassword();
+  else if (d.joinhh !== undefined) householdAction("join");
+  else if (d.createhh !== undefined) householdAction("create");
+  else if (d.pickhh) switchHousehold(d.pickhh);
+  else if (d.households !== undefined) { S.pickHousehold = true; S.lockErr = ""; render(); scrollTo(0, 0); }
+  else if (d.closehh !== undefined) { S.pickHousehold = false; S.lockErr = ""; render(); }
+  else if (d.invite !== undefined) { S.sheet = { kind: "invite" }; render(); }
+  else if (d.copyinvite !== undefined) { const l = inviteLink(curHousehold().invite_code); navigator.clipboard.writeText(l).then(() => toast("Link copied"), () => { const el = $("#inv-link"); el.select(); }); }
+  else if (d.shareinvite !== undefined) { navigator.share({ title: "Join our shopping list", text: "Join our shared shopping list on Basket:", url: inviteLink(curHousehold().invite_code) }).catch(() => {}); }
+  else if (d.newinvite !== undefined) {
+    const { data, error } = await sb.rpc("new_invite_code", { p_household: S.hid });
+    if (error) fail(error); else { curHousehold().invite_code = data; render(); toast("New link made. The old one no longer works."); }
+  }
+  else if (d.renamehh !== undefined) { S.sheet = { kind: "name", kind2: "households", id: S.hid, value: curHousehold().name, title: "Rename household" }; render(); }
+  else if (d.myname !== undefined) { S.sheet = { kind: "name", kind2: "members", id: S.session.user.id, value: S.me, title: "Your name" }; render(); }
   else if (d.update !== undefined) S.updateReady();
   else if (d.tab) { S.tab = d.tab; ls.set("basket.tab", d.tab); S.sheet = null; render(); scrollTo(0, 0); }
   else if (d.shop) { S.shop = d.shop; render(); }
@@ -398,8 +495,12 @@ document.addEventListener("click", async (e) => {
   else if (d.infotoggle !== undefined) { S.info = !S.info; S.help = S.info ? ["Info mode is on", "Tap anything on the screen to see what it does. Nothing will change while info mode is on."] : null; render(); }
   else if (d.pushon !== undefined) pushOn();
   else if (d.pushoff !== undefined) pushOff();
-  else if (d.switchme !== undefined) { S.lockScreen = true; render(); }
-  else if (d.signout !== undefined) { await sb.auth.signOut(); S.session = null; S.ready = false; ls.del("basket.me"); S.me = null; render(); }
+  else if (d.signout !== undefined) {
+    try { await pushOff(); } catch {}
+    await sb.auth.signOut(); if (channel) sb.removeChannel(channel);
+    Object.assign(S, { session: null, ready: false, me: null, households: null, hid: null, items: [], members: [], pickHousehold: false, sheet: null, lockErr: "" });
+    ls.del("basket.household"); render();
+  }
   else if (d.closebtn !== undefined || d.close !== undefined) { S.sheet = null; render(); }
 });
 document.addEventListener("change", async (e) => {
@@ -419,8 +520,9 @@ document.addEventListener("change", async (e) => {
 document.addEventListener("input", (e) => { if (e.target.id === "q") { S.q = e.target.value; render(); } });
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Enter") return;
-  if (e.target.id === "pw") unlock();
-  else if (e.target.id === "me-new") setMe(e.target.value);
+  if (e.target.id === "a-pw") authSubmit();
+  else if (e.target.id === "h-code") householdAction("join");
+  else if (e.target.id === "h-name") householdAction("create");
   else if (e.target.id === "n-name") saveName();
   else if (e.target.id === "q" && S.q.trim()) { const b = document.querySelector("[data-new]"); if (b) b.click(); }
 });
@@ -454,7 +556,10 @@ const HELP = [
   ["[data-rename]", () => ["Edit", "Rename or delete this shop or category."]],
   ["[data-addto=shops]", () => ["Add shop", "Adds a new shop you can pick when adding items."]],
   ["[data-addto=categories]", () => ["Add category", "Adds a new category, e.g. Snacks or Baby."]],
-  ["[data-switchme]", () => ["Whose phone", "Changes the name used on this phone. It shows as \"added by …\" and decides who gets notified."]],
+  ["[data-myname]", () => ["Your name", "How you appear to others in this household, e.g. \"added by …\" and in notifications."]],
+  ["[data-renamehh]", () => ["Household", "The name of this shared list. The grey line shows who's in it."]],
+  ["[data-invite]", () => ["Invite someone", "Gives you a link to send. Whoever opens it can create an account and join this list."]],
+  ["[data-households]", () => ["Other households", "Switch to another list you belong to, or join or create a new one."]],
   ["[data-signout]", () => ["Sign out", "Signs this phone out. You'll need the household password to get back in."]],
   ["[data-pushon]", () => ["Notifications", "Get a notification when the other person adds items to the list."]],
   ["[data-pushoff]", () => ["Notifications", "Stops notifications on this phone."]],
@@ -623,7 +728,7 @@ async function onBarcode(code, mode) {
 const isStandalone = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
 const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent);
 function pushStatusText() {
-  const other = knownNames().filter((p) => p !== S.me).join(" or ") || "someone else";
+  const other = S.members.filter((m) => m.user_id !== S.session.user.id).map((m) => m.display_name).join(" or ") || "someone else";
   return {
     on: `On. You'll hear when ${other} adds items.`,
     off: `Get a notification when ${other} adds items.`,
@@ -641,7 +746,7 @@ async function pushInit() {
   const reg = await navigator.serviceWorker.ready;
   const sub = await reg.pushManager.getSubscription();
   S.push = sub ? "on" : "off";
-  if (sub && S.me) sb.from("push_subscriptions").upsert({ endpoint: sub.endpoint, person: S.me, subscription: sub.toJSON() }).then(() => {});
+  if (sub && S.me) sb.from("push_subscriptions").upsert({ endpoint: sub.endpoint, person: S.me, subscription: sub.toJSON(), household_id: S.hid, user_id: S.session.user.id }).then(() => {});
 }
 function b64ToBytes(b64) {
   const pad = "=".repeat((4 - (b64.length % 4)) % 4);
@@ -657,7 +762,7 @@ async function pushOn() {
     if (!publicKey) throw new Error("no key");
     const reg = await navigator.serviceWorker.ready;
     const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(publicKey) });
-    const { error } = await sb.from("push_subscriptions").upsert({ endpoint: sub.endpoint, person: S.me, subscription: sub.toJSON() });
+    const { error } = await sb.from("push_subscriptions").upsert({ endpoint: sub.endpoint, person: S.me, subscription: sub.toJSON(), household_id: S.hid, user_id: S.session.user.id });
     if (error) throw error;
     S.push = "on"; toast("Notifications on");
   } catch (e) { console.error(e); S.push = "off"; toast("Couldn't turn on notifications. Try again."); }
@@ -691,6 +796,11 @@ if ("serviceWorker" in navigator) {
 
 // ---------- boot ----------
 (async () => {
+  // An invite link (…?join=CODE) is remembered until the person has signed in and joined.
+  const q = new URLSearchParams(location.search).get("join");
+  if (q) { ls.set("basket.join", q.toLowerCase()); history.replaceState(null, "", location.pathname); }
+  S.joinCode = ls.get("basket.join");
+  if (S.joinCode) S.authMode = "up";
   const { data } = await sb.auth.getSession();
   S.session = data.session;
   sb.auth.onAuthStateChange((_ev, session) => { S.session = session; });

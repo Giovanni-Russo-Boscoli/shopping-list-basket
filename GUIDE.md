@@ -18,12 +18,13 @@ Open the Basket link you were sent, then add it to your home screen so it opens 
 2. Tap **Install app** (or **Add to Home screen**), then **Install**.
 3. Open Basket from its icon on your home screen.
 
-## 2. Sign in (once)
+## 2. Create your account (once)
 
-1. Type the **household password** (ask whoever set Basket up; it is never written down here) and tap **Unlock**.
-2. Type **your name**, or tap it if it's already listed, then tap **Continue**. It's how the others see who added what.
+1. Open the **invite link** you were sent (it ends in `?join=…`). If you're setting Basket up for the first time, just open the app.
+2. Tap **Create account**, type your first name, email and a password (at least 8 characters), then tap **Create account**.
+3. Check your name, then tap **Join**. If you have no invite, type a household name (e.g. "Home") and tap **Create household** instead.
 
-The phone stays signed in after that.
+The phone stays signed in after that. To share the list with someone else, go to **Settings > Invite someone** and send them the link.
 
 ## 3. Turn on notifications
 
@@ -70,9 +71,10 @@ Updates install themselves. When there's a new version, a bar saying **"Update r
 
 | Problem | Fix |
 | --- | --- |
-| "That password isn't right" | Check it with whoever set Basket up. It's case-sensitive. |
+| "Email or password isn't right" | Passwords are case-sensitive. Tap **Forgot password?** on the sign-in screen. |
 | Someone else's changes don't show | Close the app completely and reopen it. Check you have a signal. |
 | Scan shows a black screen or "Camera blocked" | Allow camera access for Basket in your phone's settings. iPhone may ask again each time you open the app. |
 | A barcode won't scan | Hold the pack flat in good light, about 15 cm away, or type the number into the box under the camera. |
 | No notifications | Settings > Notifications should say "On". On iPhone, open Basket from the home screen icon, not Safari. |
-| Wrong name at the top right | Settings > "I'm …" > **Switch**. |
+| Wrong name at the top right | Settings > **You** > **Change name**. |
+| "That invite isn't valid" | Ask for a fresh link: Settings > Invite someone. |

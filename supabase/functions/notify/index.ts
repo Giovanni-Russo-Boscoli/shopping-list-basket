@@ -41,26 +41,30 @@ async function vapid() {
 
 async function run() {
   const { data: items, error } = await sb.from("items")
-    .select("id,name,pending_by,pending_at").eq("pending", true).eq("notified", false);
+    .select("id,name,household_id,pending_by,pending_by_user,pending_at").eq("pending", true).eq("notified", false);
   if (error) throw error;
-  const byPerson = new Map<string, typeof items>();
+  // One bundle per (household, person who added).
+  const groups = new Map<string, NonNullable<typeof items>>();
   for (const it of items ?? []) {
-    const k = it.pending_by || "Someone";
-    byPerson.set(k, [...(byPerson.get(k) ?? []), it]);
+    const k = it.household_id + "|" + (it.pending_by_user ?? it.pending_by ?? "");
+    groups.set(k, [...(groups.get(k) ?? []), it]);
   }
   const { data: subs, error: e2 } = await sb.from("push_subscriptions").select("*");
   if (e2) throw e2;
   const { keys } = await vapid();
-  const server = await webpush.ApplicationServer.new({ contactInformation: "mailto:household@basket-home.app", vapidKeys: keys });
+  const server = await webpush.ApplicationServer.new({ contactInformation: "mailto:noreply@basket-home.app", vapidKeys: keys });
   let sent = 0;
-  for (const [person, list] of byPerson) {
+  for (const list of groups.values()) {
     const newest = Math.max(...list.map((i) => new Date(i.pending_at).getTime()));
     if (Date.now() - newest < QUIET_MS) continue; // still adding: wait for a quiet spell
+    const { household_id, pending_by_user } = list[0];
+    const person = list[0].pending_by || "Someone";
     const names = list.map((i) => i.name);
     const title = names.length === 1 ? `${person} added ${names[0]}` : `${person} added ${names.length} items`;
     const body = names.length === 1 ? "Tap to open the list" : names.slice(0, 6).join(", ") + (names.length > 6 ? "…" : "");
     for (const s of subs ?? []) {
-      if (s.person === person) continue;
+      if (s.household_id !== household_id) continue;
+      if (pending_by_user ? s.user_id === pending_by_user : s.person === person) continue; // not to the person who added
       try {
         await server.subscribe(s.subscription).pushTextMessage(JSON.stringify({ title, body }), {});
         sent++;
