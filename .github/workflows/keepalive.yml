@@ -1,0 +1,30 @@
+# Pings the database every 3 days so the free Supabase project never pauses (it pauses after 7 idle days).
+# Reads the project URL and public anon key from config.js, so no secrets are needed.
+name: Keep database awake
+on:
+  schedule:
+    - cron: "17 6 */3 * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ping Supabase
+        run: |
+          url=$(grep -o 'supabaseUrl: *"[^"]*"' config.js | cut -d'"' -f2)
+          key=$(grep -o 'supabaseAnonKey: *"[^"]*"' config.js | cut -d'"' -f2)
+          curl -fsS -X POST "$url/rest/v1/rpc/ping" -H "apikey: $key" -H "Authorization: Bearer $key" \
+            -H "Content-Type: application/json" -d '{}'
+      # GitHub switches off scheduled jobs after 60 days with no commits. A tiny monthly heartbeat commit prevents that.
+      - name: Heartbeat commit if the repo has been quiet for 45 days
+        run: |
+          last=$(git log -1 --format=%ct)
+          if [ $(( $(date +%s) - last )) -gt $(( 45*86400 )) ]; then
+            date -u +%FT%TZ > .github/heartbeat
+            git config user.name "basket-keepalive"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .github/heartbeat && git commit -m "Keep-alive heartbeat" && git push
+          fi
