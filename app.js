@@ -22,7 +22,13 @@ const S = {
 // ---------- helpers ----------
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-const eur = (n) => "€" + Number(n).toFixed(2);
+const CURRENCIES = [["EUR", "€"], ["BRL", "R$"], ["GBP", "£"], ["USD", "$"]];
+const currency = () => ((S.households || []).find((h) => h.id === S.hid) || {}).currency || "EUR";
+const currencySymbol = () => (CURRENCIES.find((c) => c[0] === currency()) || CURRENCIES[0])[1];
+const eur = (n) => { // formats in the household's currency, the way the chosen language writes numbers
+  try { return new Intl.NumberFormat(I18N.lang === "pt" ? "pt-BR" : "en-IE", { style: "currency", currency: currency() }).format(n); }
+  catch { return currencySymbol() + Number(n).toFixed(2); }
+};
 const initials = (n) => n.split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase() || "?";
 const shopById = (id) => S.shops.find((s) => s.id === id);
 const shopId = (name) => (S.shops.find((s) => s.name === name) || {}).id;
@@ -176,6 +182,8 @@ function viewSettings() {
     ${listEditor("shops", S.shops)}${listEditor("categories", S.cats)}
     <section class="group"><h2><span>Household</span><span>${S.members.length} ${S.members.length === 1 ? "person" : "people"}</span></h2><div class="list">
       <div class="row"><span class="info" style="flex:1"><div class="name">${esc(curHousehold().name)}</div><div class="meta" style="white-space:normal">${esc(S.members.map((m) => m.display_name).join(", "))}</div></span><button class="ghost" data-renamehh>Rename</button></div>
+      <div class="row" style="flex-wrap:wrap"><span class="info" style="flex:1"><div class="name">Currency</div><div class="meta" style="white-space:normal">Used for prices and totals in this household.</div></span>
+        <div class="chips" role="group" aria-label="Currency" style="padding-top:0" data-notr>${CURRENCIES.map(([c, sym]) => `<button class="chip" data-currency="${c}" aria-pressed="${currency() === c}">${sym}</button>`).join("")}</div></div>
       <div class="row"><span class="info" style="flex:1"><div class="name">Invite someone</div><div class="meta" style="white-space:normal">Send them a link to join this list.</div></span><button class="ghost" data-invite>Invite</button></div>
       <div class="row"><span class="info" style="flex:1"><div class="name">Other households</div><div class="meta" style="white-space:normal">${S.households.length > 1 ? "You're in " + S.households.length + ". Switch, or join or create another." : "Join or create another list, e.g. for work."}</div></span><button class="ghost" data-households>Open</button></div></div></section>
     <section class="group"><h2><span>You</span></h2><div class="list">
@@ -215,7 +223,7 @@ function sheetHtml() {
     <label class="f" for="e-note">Quantity / note</label><input id="e-note" value="${esc(it.quantity_note)}" placeholder="e.g. 2 L, the green one">
     <label class="f" for="e-barcode">Barcode</label>
     <div class="search" style="margin:0"><input id="e-barcode" value="${esc(it.barcode || "")}" inputmode="numeric" placeholder="Optional" autocomplete="off"><button class="iconbtn" data-scan="edit">Scan</button></div>
-    <label class="f">Shops and price (€)</label>
+    <label class="f">Shops and price (${currencySymbol()})</label>
     <div class="list" style="padding:0 12px">${S.shops.map((s) => { const on = s.id in it.prices; const p = it.prices[s.id];
       return `<div class="shoprow"><input type="checkbox" id="e-s${s.id}" data-shopchk="${s.id}" ${on ? "checked" : ""}><label class="sn" for="e-s${s.id}">${esc(s.name)}</label>
       <input type="number" inputmode="decimal" step="0.01" min="0" id="e-p${s.id}" data-shopprice="${s.id}" value="${typeof p === "number" ? p.toFixed(2) : ""}" placeholder="—" ${on ? "" : "disabled"} aria-label="Price at ${esc(s.name)}"></div>`; }).join("")}</div>
@@ -325,9 +333,10 @@ async function forgotPassword() {
   render();
 }
 async function loadHouseholds() {
-  const { data, error } = await sb.from("members").select("household_id,display_name,households(id,name,invite_code)").eq("user_id", S.session.user.id);
+  let { data, error } = await sb.from("members").select("household_id,display_name,households(id,name,invite_code,currency)").eq("user_id", S.session.user.id);
+  if (error) ({ data, error } = await sb.from("members").select("household_id,display_name,households(id,name,invite_code)").eq("user_id", S.session.user.id)); // before 005_currency.sql
   if (error) throw error;
-  S.households = data.filter((r) => r.households).map((r) => ({ id: r.household_id, name: r.households.name, invite_code: r.households.invite_code, display_name: r.display_name }));
+  S.households = data.filter((r) => r.households).map((r) => ({ id: r.household_id, name: r.households.name, invite_code: r.households.invite_code, currency: r.households.currency || "EUR", display_name: r.display_name }));
   if (!S.households.some((h) => h.id === S.hid)) S.hid = S.households.length === 1 ? S.households[0].id : null;
   const cur = S.households.find((h) => h.id === S.hid);
   S.me = cur ? cur.display_name : null;
@@ -351,6 +360,7 @@ async function householdAction(kind) {
     // New households start with English category names; rename them to the chosen language.
     await Promise.all(Object.entries(I18N.DEFAULT_CATS[I18N.lang]).map(([en, local]) =>
       sb.from("categories").update({ name: local }).eq("household_id", data).eq("name", en)));
+    if (I18N.lang === "pt") await sb.from("households").update({ currency: "BRL" }).eq("id", data); // ignored before 005_currency.sql
   }
   S.joinCode = null; ls.del("basket.join"); await switchHousehold(data);
 }
@@ -450,7 +460,12 @@ document.addEventListener("click", async (e) => {
   const t = e.target.closest("button,[data-close]"); if (!t || t.disabled) return;
   const d = t.dataset; const num = (x) => Number(x);
   if (d.close !== undefined && e.target !== t) return;
-  if (d.lang) { I18N.set(d.lang); render(); if (S.push === "on") pushInit().catch(() => {}); }
+  if (d.currency) {
+    const h = (S.households || []).find((x) => x.id === S.hid); const before = h.currency; h.currency = d.currency; render();
+    const { error } = await sb.from("households").update({ currency: d.currency }).eq("id", S.hid);
+    if (error) { h.currency = before; render(); toast(/currency/i.test(error.message || "") ? "Ask whoever set up Basket to run update 005 in Supabase first." : "Couldn't save. Try again."); }
+  }
+  else if (d.lang) { I18N.set(d.lang); render(); if (S.push === "on") pushInit().catch(() => {}); }
   else if (d.authmode) { S.authMode = d.authmode; S.lockErr = ""; render(); }
   else if (d.auth !== undefined) authSubmit();
   else if (d.forgot !== undefined) forgotPassword();
@@ -572,6 +587,7 @@ const HELP = [
   ["[data-addto=shops]", () => ["Add shop", "Adds a new shop you can pick when adding items."]],
   ["[data-addto=categories]", () => ["Add category", "Adds a new category, e.g. Snacks or Baby."]],
   ["[data-myname]", () => ["Your name", "How you appear to others in this household, e.g. \"added by …\" and in notifications."]],
+  ["[data-currency]", () => ["Currency", "The currency for prices in this household. Everyone in it sees the same."]],
   ["[data-renamehh]", () => ["Household", "The name of this shared list. The grey line shows who's in it."]],
   ["[data-invite]", () => ["Invite someone", "Gives you a link to send. Whoever opens it can create an account and join this list."]],
   ["[data-households]", () => ["Other households", "Switch to another list you belong to, or join or create a new one."]],
@@ -582,7 +598,7 @@ const HELP = [
   ["#e-cat", () => ["Category", "Where it's grouped on the list, e.g. Dairy."]],
   ["#e-note", () => ["Quantity / note", "Anything that helps the shopper: size, how many, which brand."]],
   ["[data-shopchk]", () => ["Shop", "Tick every shop that sells this item. Leave them all unticked for \"Any shop\"."]],
-  ["[data-shopprice]", () => ["Price", "Optional. The price at this shop in euro, used for the estimated total."]],
+  ["[data-shopprice]", () => ["Price", "Optional. The price at this shop, used for the estimated total."]],
   ["#e-barcode", () => ["Barcode", "The number under the barcode. Lets you scan this item onto the list."]],
   ["[data-photo]", () => ["Photo", "Take or choose a picture, so the shopper knows exactly which product to get."]],
   ["[data-nophoto]", () => ["Remove photo", "Removes the photo from this item."]],
